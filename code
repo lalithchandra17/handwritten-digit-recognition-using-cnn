@@ -1,0 +1,241 @@
+# --- 1. IMPORT LIBRARIES ---
+import numpy as np
+import pandas as pd
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout, BatchNormalization
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.callbacks import ReduceLROnPlateau, EarlyStopping
+from sklearn.model_selection import train_test_split
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.metrics import confusion_matrix, classification_report
+# For plotting the model architecture
+from tensorflow.keras.utils import plot_model
+
+# --- 2. LOAD AND PREPROCESS DATA ---
+(X_train_full, Y_train_full), (X_test, Y_test) = tf.keras.datasets.mnist.load_data()
+
+# Normalize and reshape
+X_train_full = X_train_full / 255.0
+X_test = X_test / 255.0
+X_train_full = X_train_full.reshape(-1, 28, 28, 1)
+X_test = X_test.reshape(-1, 28, 28, 1)
+
+# One-hot encode labels
+Y_train_full_cat = tf.keras.utils.to_categorical(Y_train_full, num_classes=10)
+Y_test_cat = tf.keras.utils.to_categorical(Y_test, num_classes=10)
+
+# Split data into training and validation sets
+X_train, X_val, Y_train, Y_val = train_test_split(X_train_full, Y_train_full_cat, test_size=0.1, random_state=42)
+
+print(f"Training data shape: {X_train.shape}")
+print(f"Validation data shape: {X_val.shape}")
+print(f"Test data shape: {X_test.shape}\n")
+
+# --- 3. DATA AUGMENTATION ---
+datagen = ImageDataGenerator(
+    rotation_range=15,
+    width_shift_range=0.1,
+    height_shift_range=0.1,
+    zoom_range=0.1,
+)
+datagen.fit(X_train)
+
+# --- 4. DEFINE MODELS FOR COMPARISON ---
+
+def create_complex_cnn():
+    """Defines the original, more complex CNN model."""
+    model = Sequential([
+        Conv2D(32, (3, 3), activation='relu', padding='same', input_shape=(28, 28, 1)),
+        BatchNormalization(),
+        Conv2D(32, (3, 3), activation='relu', padding='same'),
+        BatchNormalization(),
+        MaxPooling2D((2, 2)),
+        Dropout(0.25),
+        Conv2D(64, (3, 3), activation='relu', padding='same'),
+        BatchNormalization(),
+        Conv2D(64, (3, 3), activation='relu', padding='same'),
+        BatchNormalization(),
+        MaxPooling2D((2, 2)),
+        Dropout(0.25),
+        Flatten(),
+        Dense(512, activation='relu'),
+        BatchNormalization(),
+        Dropout(0.5),
+        Dense(10, activation='softmax')
+    ])
+    optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)
+    model.compile(optimizer=optimizer, loss="categorical_crossentropy", metrics=["accuracy"])
+    return model
+
+def create_simple_cnn():
+    """Defines a simpler CNN model for comparison."""
+    model = Sequential([
+        Conv2D(32, (3, 3), activation='relu', input_shape=(28, 28, 1)),
+        MaxPooling2D((2, 2)),
+        Dropout(0.2),
+        Flatten(),
+        Dense(128, activation='relu'),
+        Dense(10, activation='softmax')
+    ])
+    optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)
+    model.compile(optimizer=optimizer, loss="categorical_crossentropy", metrics=["accuracy"])
+    return model
+
+# --- 5. VISUALIZE MODEL ARCHITECTURE (FLOWCHART) ---
+print("--- Complex Model Architecture ---")
+complex_model = create_complex_cnn()
+complex_model.summary()
+try:
+    plot_model(complex_model, to_file='complex_model_flowchart.png', show_shapes=True, show_layer_names=True)
+    print("\n✅ Model flowchart saved as 'complex_model_flowchart.png'")
+    # Display the image if in a notebook environment
+    from IPython.display import Image
+    display(Image(filename='complex_model_flowchart.png'))
+except ImportError:
+    print("\nCould not create model flowchart. Please install pydot and graphviz.")
+
+
+# --- 6. TRAIN THE COMPLEX MODEL ---
+print("\n--- Training the Complex CNN Model ---")
+callbacks = [
+    ReduceLROnPlateau(monitor='val_accuracy', patience=3, verbose=1, factor=0.5, min_lr=0.00001),
+    EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True, verbose=1)
+]
+BATCH_SIZE = 86
+EPOCHS = 50 # Early stopping will likely stop it before 50 epochs
+
+history_complex = complex_model.fit(
+    datagen.flow(X_train, Y_train, batch_size=BATCH_SIZE),
+    epochs=EPOCHS,
+    validation_data=(X_val, Y_val),
+    verbose=1,
+    steps_per_epoch=X_train.shape[0] // BATCH_SIZE,
+    callbacks=callbacks
+)
+
+# --- 7. TRAIN THE SIMPLE MODEL ---
+print("\n--- Training the Simple CNN Model ---")
+simple_model = create_simple_cnn()
+history_simple = simple_model.fit(
+    X_train, Y_train,
+    epochs=EPOCHS,
+    batch_size=BATCH_SIZE,
+    validation_data=(X_val, Y_val),
+    verbose=1,
+    callbacks=callbacks
+)
+
+# --- 8. EVALUATE COMPLEX MODEL AND VISUALIZE RESULTS ---
+print("\n\n--- Performance Analysis of Complex CNN Model ---")
+
+# Accuracy & Loss Rate Graphs
+plt.figure(figsize=(18, 6))
+plt.subplot(1, 2, 1)
+plt.plot(history_complex.history['accuracy'], label='Training Accuracy')
+plt.plot(history_complex.history['val_accuracy'], label='Validation Accuracy')
+plt.title('Accuracy vs. Epochs (Complex Model)')
+plt.xlabel('Epochs')
+plt.ylabel('Accuracy')
+plt.legend()
+
+plt.subplot(1, 2, 2)
+plt.plot(history_complex.history['loss'], label='Training Loss')
+plt.plot(history_complex.history['val_loss'], label='Validation Loss')
+plt.title('Loss Rate vs. Epochs (Complex Model)')
+plt.xlabel('Epochs')
+plt.ylabel('Loss')
+plt.legend()
+plt.show()
+
+# Confusion Matrix
+Y_pred_complex = complex_model.predict(X_val)
+Y_pred_classes = np.argmax(Y_pred_complex, axis=1)
+Y_true = np.argmax(Y_val, axis=1)
+cm = confusion_matrix(Y_true, Y_pred_classes)
+
+plt.figure(figsize=(10, 8))
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=range(10), yticklabels=range(10))
+plt.title('Confusion Matrix (Complex Model)')
+plt.xlabel('Predicted Label')
+plt.ylabel('True Label')
+plt.show()
+
+# Classification Report (Precision, Recall, F1-Score)
+print("\n--- Classification Report (Complex Model) ---\n")
+report = classification_report(Y_true, Y_pred_classes, target_names=[str(i) for i in range(10)])
+print(report)
+
+# Bar Chart for Precision, Recall, F1-Score
+report_data = classification_report(Y_true, Y_pred_classes, output_dict=True)
+report_df = pd.DataFrame(report_data).transpose().iloc[:10, :3] # Get metrics for classes 0-9
+report_df.plot(kind='bar', figsize=(14, 7))
+plt.title('Precision, Recall, and F1-Score per Class (Complex Model)')
+plt.xlabel('Digit Class')
+plt.ylabel('Score')
+plt.xticks(rotation=0)
+plt.legend(loc='lower right')
+plt.grid(axis='y', linestyle='--')
+plt.show()
+
+# --- 9. COMPARISON BETWEEN MODELS ---
+print("\n\n--- Comparing Model Performances ---")
+
+# Comparison of Accuracy and Loss on Validation Set
+plt.figure(figsize=(18, 6))
+plt.subplot(1, 2, 1)
+plt.plot(history_complex.history['val_accuracy'], label='Complex Model Val Accuracy')
+plt.plot(history_simple.history['val_accuracy'], label='Simple Model Val Accuracy')
+plt.title('Model Comparison: Validation Accuracy')
+plt.xlabel('Epochs')
+plt.ylabel('Accuracy')
+plt.legend()
+
+plt.subplot(1, 2, 2)
+plt.plot(history_complex.history['val_loss'], label='Complex Model Val Loss')
+plt.plot(history_simple.history['val_loss'], label='Simple Model Val Loss')
+plt.title('Model Comparison: Validation Loss')
+plt.xlabel('Epochs')
+plt.ylabel('Loss')
+plt.legend()
+plt.show()
+
+# Final evaluation on the unseen test set
+print("\n--- Final Evaluation on Test Set ---")
+complex_loss, complex_accuracy = complex_model.evaluate(X_test, Y_test_cat, verbose=0)
+simple_loss, simple_accuracy = simple_model.evaluate(X_test, Y_test_cat, verbose=0)
+print(f"Complex Model Test Accuracy: {complex_accuracy*100:.2f}%")
+print(f"Simple Model Test Accuracy:  {simple_accuracy*100:.2f}%")
+
+# Bar chart for final test accuracy comparison
+plt.figure(figsize=(8, 6))
+models = ['Complex Model', 'Simple Model']
+accuracies = [complex_accuracy, simple_accuracy]
+sns.barplot(x=models, y=accuracies, palette='viridis')
+plt.title('Final Test Accuracy Comparison')
+plt.ylabel('Accuracy')
+plt.ylim(0.9, 1.0) # Zoom in for better visibility
+for i, acc in enumerate(accuracies):
+    plt.text(i, acc + 0.001, f"{acc*100:.2f}%", ha='center', va='bottom', fontsize=12)
+plt.show()
+
+
+# --- 10. VISUALIZE PREDICTIONS ON TEST SET ---
+print("\n--- Visualizing Predictions from Complex Model on Test Data ---")
+predictions = complex_model.predict(X_test)
+predicted_classes = np.argmax(predictions, axis=1)
+
+plt.figure(figsize=(10, 10))
+for i in range(25):
+    plt.subplot(5, 5, i + 1)
+    plt.xticks([])
+    plt.yticks([])
+    plt.grid(False)
+    plt.imshow(X_test[i].reshape(28, 28), cmap=plt.cm.binary)
+    color = 'green' if predicted_classes[i] == Y_test[i] else 'red'
+    plt.xlabel(f"True: {Y_test[i]}\nPred: {predicted_classes[i]}", color=color)
+plt.tight_layout()
+plt.show()
+
+print("\n✅ Script finished successfully!")
